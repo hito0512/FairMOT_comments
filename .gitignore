@@ -3,3 +3,5 @@
 *.pkl
 2DMOT2015/
 models/
+gt.txt
+result/test_all.avi
