@@ -1,1 +1,5 @@
-.idea
+*.pyc
+*.jpg
+*.pkl
+2DMOT2015/
+models/
