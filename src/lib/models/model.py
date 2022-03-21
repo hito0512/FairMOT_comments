@@ -26,8 +26,15 @@ _model_factory = {
 
 }
 
+# arch = mobilenetv2_10,
+# opt.heads = {'hm': opt.num_classes,
+#               'wh': 2 if not opt.ltrb else 4,
+#               'id': opt.reid_dim}
+# head_conv = 256
 def create_model(arch, heads, head_conv):
+  # num_layers = 10
   num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
+  # arch = mobilenetv2
   arch = arch[:arch.find('_')] if '_' in arch else arch
   get_model = _model_factory[arch]
   model = get_model(num_layers=num_layers, heads=heads, head_conv=head_conv)

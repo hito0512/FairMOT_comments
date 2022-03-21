@@ -11,6 +11,7 @@ def _sigmoid(x):
 
 def _gather_feat(feat, ind, mask=None):
     dim  = feat.size(2)
+    # 沿着 dim 方向 复制shape为(ind.size(0), ind.size(1))
     ind  = ind.unsqueeze(2).expand(ind.size(0), ind.size(1), dim)
     feat = feat.gather(1, ind)
     if mask is not None:

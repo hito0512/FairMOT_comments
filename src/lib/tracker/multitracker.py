@@ -34,9 +34,11 @@ class STrack(BaseTrack):
 
         self.score = score
         self.tracklet_len = 0
-
+        # 平滑，并做归一化 temp_feat
         self.smooth_feat = None
+        # 对特征做了归一化
         self.update_features(temp_feat)
+        # 对temp_feat做归一化并保存起来
         self.features = deque([], maxlen=buffer_size)
         self.alpha = 0.9
 
@@ -73,10 +75,12 @@ class STrack(BaseTrack):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
+        # 卡尔曼初始化观测值以及协方差矩阵，初始观测值等于检测值
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
+        # 第一帧的状态为激活
         if frame_id == 1:
             self.is_activated = True
         #self.is_activated = True
@@ -200,7 +204,9 @@ class JDETracker(object):
         self.frame_id = 0
         self.det_thresh = opt.conf_thres
         self.buffer_size = int(frame_rate / 30.0 * opt.track_buffer)
+        # self.buffer_size = 60
         self.max_time_lost = self.buffer_size
+        # opt.K = 128
         self.max_per_image = opt.K
         self.mean = np.array(opt.mean, dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array(opt.std, dtype=np.float32).reshape(1, 1, 3)
@@ -213,18 +219,24 @@ class JDETracker(object):
         dets = ctdet_post_process(
             dets.copy(), [meta['c']], [meta['s']],
             meta['out_height'], meta['out_width'], self.opt.num_classes)
+        # dets 返回的是各个类别的字典 eg：[{1:[[0,1],[2,1]],2:[[0,2],[2,1]]}]
         for j in range(1, self.opt.num_classes + 1):
             dets[0][j] = np.array(dets[0][j], dtype=np.float32).reshape(-1, 5)
         return dets[0]
 
     def merge_outputs(self, detections):
+        # eg：[{1:[[0,1],[2,1]],2:[[0,2],[2,1]]}]
+        # detections 是个列表，detection是个字典
+        # 对应取出每个类的检测结果，把他们都合并到一起
         results = {}
         for j in range(1, self.opt.num_classes + 1):
             results[j] = np.concatenate(
                 [detection[j] for detection in detections], axis=0).astype(np.float32)
 
+        # j 是类别，不要搞错了！！
         scores = np.hstack(
             [results[j][:, 4] for j in range(1, self.opt.num_classes + 1)])
+        # 判断是否超过了指定数量
         if len(scores) > self.max_per_image:
             kth = len(scores) - self.max_per_image
             thresh = np.partition(scores, kth)[kth]
@@ -250,26 +262,35 @@ class JDETracker(object):
                 'out_height': inp_height // self.opt.down_ratio,
                 'out_width': inp_width // self.opt.down_ratio}
 
+        # 下采样4倍
         ''' Step 1: Network forward, get detections & embeddings'''
         with torch.no_grad():
             # print(im_blob.shape)
             output = self.model(im_blob)[-1]
             hm = output['hm'].sigmoid_()
             wh = output['wh']
+            # id 重识别
             id_feature = output['id']
+            # 按行做 L2 正则化
             id_feature = F.normalize(id_feature, dim=1)
 
             reg = output['reg'] if self.opt.reg_offset else None
+            # 获取检测结果和对应的索引
             dets, inds = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K)
             id_feature = _tranpose_and_gather_feat(id_feature, inds)
             id_feature = id_feature.squeeze(0)
             id_feature = id_feature.cpu().numpy()
 
+        # 以字典的形式返回各个类别对应的检测结果，shape=n*5
         dets = self.post_process(dets, meta)
+        # dets = {1:[[0,1],[2,1]],2:[[0,2],[2,1]]}，传入的时候将字典又转为列表
+        # merge_outputs ：将各个类别的结果合并
         dets = self.merge_outputs([dets])[1]
 
         remain_inds = dets[:, 4] > self.opt.conf_thres
+        # dets.shape = (len(remain_inds), 128)
         dets = dets[remain_inds]
+        # id_feature.shape = (len(remain_inds), 128)
         id_feature = id_feature[remain_inds]
 
         # vis
@@ -285,7 +306,8 @@ class JDETracker(object):
         '''
 
         if len(dets) > 0:
-            '''Detections'''
+            '''Detections'''  
+            # 对每一个检测结果进行 [坐标，得分，feature，保存特征数量] 初始化一个跟踪器
             detections = [STrack(STrack.tlbr_to_tlwh(tlbrs[:4]), tlbrs[4], f, 30) for
                           (tlbrs, f) in zip(dets[:, :5], id_feature)]
         else:
@@ -300,69 +322,100 @@ class JDETracker(object):
             else:
                 tracked_stracks.append(track)
 
+        # 先卡尔曼进行匹配
         ''' Step 2: First association, with embedding'''
+        # 将tracked_stracks与lost_stracks合并
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         # Predict the current location with KF
         #for strack in strack_pool:
             #strack.predict()
+
+        # 预测strack_pool的mean 和covariance
         STrack.multi_predict(strack_pool)
+        # 计算 他俩之间的余弦距离
         dists = matching.embedding_distance(strack_pool, detections)
         #dists = matching.iou_distance(strack_pool, detections)
+        #  利用卡尔曼计算detection和pool_stacker直接的距离代价,确定两者直接的最终距离
         dists = matching.fuse_motion(self.kalman_filter, dists, strack_pool, detections)
+        # matches是能匹配的track和detection ，匈牙利进行匹配
+        # matches.shape = n*2 第一列为tracked_tracker索引，第二列为detection的索引
+        # matches: 检测结果和已存在的跟踪结果相匹配的
+        # u_track: 有跟踪状态，但是当前检测结果没有匹配上
+        # u_detection: 只有检测结果，没有跟踪状态，第一次出现
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.4)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
             det = detections[idet]
+            #  匹配的pool_tracker和detection，是跟踪态的
+            # 状态设置为跟踪态，并且是激活的，更新卡尔曼参数，计数加1
             if track.state == TrackState.Tracked:
                 track.update(detections[idet], self.frame_id)
                 activated_starcks.append(track)
             else:
+                # 不是跟踪态的重新激活一下，更新特征和卡尔曼状态
                 track.re_activate(det, self.frame_id, new_id=False)
                 refind_stracks.append(track)
 
+        # 卡尔曼没有匹配上的用IOU进行匹配
         ''' Step 3: Second association, with IOU'''
+        # u_detection是未匹配的detection的索引
         detections = [detections[i] for i in u_detection]
+        # 对于卡尔曼没有匹配的，但是状态是跟踪态的目标，对这些目标与检测结果进行iou匹配
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        # 计算iou
         dists = matching.iou_distance(r_tracked_stracks, detections)
+        # 使用匈牙利重新进行匹配
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.5)
-
+        # 对于iou匹配上的，如果是跟踪态那么就更新卡尔曼相关参数以及外观特征，如果不是跟踪态
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections[idet]
             if track.state == TrackState.Tracked:
+                # 状态设置为跟踪态，并且是激活的，更新卡尔曼参数，计数加1
                 track.update(det, self.frame_id)
                 activated_starcks.append(track)
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
                 refind_stracks.append(track)
-                
+        # 如果iou还没有匹配上，那就放入到lost_stracks中，并标记为lost
         for it in u_track:
             track = r_tracked_stracks[it]
+            # 将和tracked_tracker iou未匹配的tracker的状态改为lost
             if not track.state == TrackState.Lost:
                 track.mark_lost()
                 lost_stracks.append(track)
 
+        # 上一步遗留的detection与unconfirmed_stracks进行IOU匹配
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
+        # 再次计算iou和匈牙利
         dists = matching.iou_distance(unconfirmed, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
         for itracked, idet in matches:
+            # 能匹配上，状态设置为跟踪态，并且是激活的，更新卡尔曼参数，计数加1
             unconfirmed[itracked].update(detections[idet], self.frame_id)
             activated_starcks.append(unconfirmed[itracked])
+        
+        # 不能匹配的计入removed_stracks
+        # 经过卡尔曼，iou，检测结果与不确定态匹配，三次匹配结果后，不确定态仍然不能匹配的，设置为删除态
         for it in u_unconfirmed:
             track = unconfirmed[it]
             track.mark_removed()
             removed_stracks.append(track)
 
         """ Step 4: Init new stracks"""
+        # 都未匹配的detection重新初始化一个unconfimed_tracker
         for inew in u_detection:
             track = detections[inew]
+            # 小于阈值的跟踪器直接丢掉
             if track.score < self.det_thresh:
                 continue
+            # 初始化卡尔曼状态以及跟踪状态，跟踪标号加1，第一帧状态为激活态，其他帧为false
             track.activate(self.kalman_filter, self.frame_id)
             activated_starcks.append(track)
         """ Step 5: Update state"""
+        # 对15帧连续track_state=lost的tracker，进行删除（这里改成仅用外观向量匹配）
         for track in self.lost_stracks:
             if self.frame_id - track.end_frame > self.max_time_lost:
                 track.mark_removed()
@@ -371,10 +424,13 @@ class JDETracker(object):
         # print('Ramained match {} s'.format(t4-t3))
 
         self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        # 将激活态的activated_starcks并入到tracked_stracks
         self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
+        # 状态为lost，但是又被跟踪上的从lost_stracks中删除，也就是留下的都是跟踪后目前没有再次跟踪上的
         self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
         self.lost_stracks.extend(lost_stracks)
+        # 状态为lost，但是超过跟踪阈值，则删除这个跟踪器
         self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
         self.removed_stracks.extend(removed_stracks)
         self.tracked_stracks, self.lost_stracks = remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)

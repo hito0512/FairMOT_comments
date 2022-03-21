@@ -58,6 +58,11 @@ def main(opt):
     opt.device = torch.device('cuda' if opt.gpus[0] >= 0 else 'cpu')
 
     print('Creating model...')
+    # arch = mobilenetv2_10,
+    # opt.heads = {'hm': opt.num_classes,
+    #               'wh': 2 if not opt.ltrb else 4,
+    #               'id': opt.reid_dim}
+    # head_conv = 256
     model = create_model(opt.arch, opt.heads, opt.head_conv)
     optimizer = torch.optim.Adam(model.parameters(), opt.lr)
     # optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=0.9, weight_decay=5e-4)

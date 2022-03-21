@@ -39,6 +39,7 @@ def get_affine_transform(center,
     dst_h = output_size[1]
 
     rot_rad = np.pi * rot / 180
+    # 对某个点旋转rot_rad度
     src_dir = get_dir([0, src_w * -0.5], rot_rad)
     dst_dir = np.array([0, dst_w * -0.5], np.float32)
 
@@ -52,6 +53,9 @@ def get_affine_transform(center,
     src[2:, :] = get_3rd_point(src[0, :], src[1, :])
     dst[2:, :] = get_3rd_point(dst[0, :], dst[1, :])
 
+    # 求解仿射变换矩阵，src：原始图像中的三个点的坐标，
+    # dst：变换后的这三个点对应的坐标
+    # trans：根据三个对应点求出的仿射变换矩阵
     if inv:
         trans = cv2.getAffineTransform(np.float32(dst), np.float32(src))
     else:
@@ -173,6 +177,7 @@ def draw_dense_reg(regmap, heatmap, center, value, radius, is_offset=False):
 
 
 def draw_msra_gaussian(heatmap, center, sigma):
+  # 点分布在 center为中心，3sigma为半经的范围内 
   tmp_size = sigma * 3
   mu_x = int(center[0] + 0.5)
   mu_y = int(center[1] + 0.5)
@@ -183,6 +188,7 @@ def draw_msra_gaussian(heatmap, center, sigma):
     return heatmap
   size = 2 * tmp_size + 1
   x = np.arange(0, size, 1, np.float32)
+  # y.shape = [size,1]
   y = x[:, np.newaxis]
   x0 = y0 = size // 2
   g = np.exp(- ((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma ** 2))

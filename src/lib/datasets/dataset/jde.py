@@ -107,6 +107,7 @@ class LoadVideo:  # for inference
         self.count = -1
         return self
 
+    
     def __next__(self):
         self.count += 1
         if self.count == len(self):
@@ -464,7 +465,7 @@ class MultiScaleJD(LoadImagesAndLabels):
         self.nds = [len(x) for x in self.img_files.values()]  # 每个子训练集(MOT15, MOT20...)的图片数
         self.cds = [sum(self.nds[:i]) for i in range(len(self.nds))]  # 当前子数据集前面累计图片总数?
         self.nF = sum(self.nds)  # 用于训练的所有子训练集的图片总数
-        self.max_objs = opt.K  # 每张图最多检测跟踪的目标个数
+        self.max_objs = opt.K  # 每张图最多检测跟踪的目标个数,默认128个
         self.augment = augment
         self.transforms = transforms
 
@@ -685,7 +686,6 @@ class MultiScaleJD(LoadImagesAndLabels):
             bbox_xy[2] = bbox_xy[0] + bbox_xy[2]
             bbox_xy[3] = bbox_xy[1] + bbox_xy[3]
 
-
             if h > 0 and w > 0:
                 radius = gaussian_radius((math.ceil(h), math.ceil(w)))
                 radius = max(0, int(radius))
@@ -694,16 +694,23 @@ class MultiScaleJD(LoadImagesAndLabels):
                 ct = np.array(
                     [bbox[0], bbox[1]], dtype=np.float32)
                 ct_int = ct.astype(np.int32)
+
+                # 获取 heat map
                 draw_gaussian(hm[cls_id], ct_int, radius)
                 if self.opt.ltrb:
                     wh[k] = ct[0] - bbox_amodal[0], ct[1] - bbox_amodal[1], \
                             bbox_amodal[2] - ct[0], bbox_amodal[3] - ct[1]
                 else:
                     wh[k] = 1. * w, 1. * h
+                # 在一维feature中的位置
                 ind[k] = ct_int[1] * output_w + ct_int[0]
+                # 中心偏移量
                 reg[k] = ct - ct_int
+                # mask标志
                 reg_mask[k] = 1
+                # 标签
                 ids[k] = label[1]
+                # bbox
                 bbox_xys[k] = bbox_xy
 
         ret = {'input': imgs, 'hm': hm, 'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg, 'ids': ids, 'bbox': bbox_xys}

@@ -35,15 +35,19 @@ def _indices_to_matches(cost_matrix, indices, thresh):
 
     return matches, unmatched_a, unmatched_b
 
-
+# thresh = 0.4
+# cost_matrix 已跟踪的目标和检测出的目标的距离
 def linear_assignment(cost_matrix, thresh):
     if cost_matrix.size == 0:
         return np.empty((0, 2), dtype=int), tuple(range(cost_matrix.shape[0])), tuple(range(cost_matrix.shape[1]))
     matches, unmatched_a, unmatched_b = [], [], []
+    # 找最佳匹配，用作匈牙利算法
     cost, x, y = lap.lapjv(cost_matrix, extend_cost=True, cost_limit=thresh)
     for ix, mx in enumerate(x):
         if mx >= 0:
+            # matches是能匹配的track和detection
             matches.append([ix, mx])
+    # 返回索引
     unmatched_a = np.where(x < 0)[0]
     unmatched_b = np.where(y < 0)[0]
     matches = np.asarray(matches)
@@ -97,14 +101,17 @@ def embedding_distance(tracks, detections, metric='cosine'):
     :param metric:
     :return: cost_matrix np.ndarray
     """
-
+    # shape=n1*n2
     cost_matrix = np.zeros((len(tracks), len(detections)), dtype=np.float)
     if cost_matrix.size == 0:
         return cost_matrix
+    # curr_feat 当前检测到的特征 shape=n1*128
     det_features = np.asarray([track.curr_feat for track in detections], dtype=np.float)
     #for i, track in enumerate(tracks):
         #cost_matrix[i, :] = np.maximum(0.0, cdist(track.smooth_feat.reshape(1,-1), det_features, metric))
+    # smooth_feat 考虑上一时刻和当前时刻的特征，即外观特征  shape=n2*128
     track_features = np.asarray([track.smooth_feat for track in tracks], dtype=np.float)
+    # shape = n2 * n1
     cost_matrix = np.maximum(0.0, cdist(track_features, det_features, metric))  # Nomalized features
     return cost_matrix
 
@@ -126,11 +133,14 @@ def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda
     if cost_matrix.size == 0:
         return cost_matrix
     gating_dim = 2 if only_position else 4
+    # 自由度为4，a为0.05的卡方分布的上a分位点为9.48
+    # 就是大于9.48到正无穷的概率为0.05，超过分位点的数出现的概率太低了，所以用9.48作为阈值
     gating_threshold = kalman_filter.chi2inv95[gating_dim]
     measurements = np.asarray([det.to_xyah() for det in detections])
     for row, track in enumerate(tracks):
         gating_distance = kf.gating_distance(
             track.mean, track.covariance, measurements, only_position, metric='maha')
+        # 超过阈值的都置为无穷，方便计算
         cost_matrix[row, gating_distance > gating_threshold] = np.inf
         cost_matrix[row] = lambda_ * cost_matrix[row] + (1 - lambda_) * gating_distance
     return cost_matrix

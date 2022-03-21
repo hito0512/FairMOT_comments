@@ -84,6 +84,7 @@ def eval_seq(opt, dataloader, data_type, result_filename, save_dir=None, show_im
         # run tracking
         timer.tic()
         blob = torch.from_numpy(img).cuda().unsqueeze(0)
+        # blob padding后的图像， img0 原始图像 1920*1080
         online_targets = tracker.update(blob, img0)
         online_tlwhs = []
         online_ids = []

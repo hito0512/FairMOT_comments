@@ -165,7 +165,7 @@ def fill_fc_weights(layers):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-
+# 进行一次上采样+卷积
 class IDAUp(nn.Module):
     def __init__(self, out_dim, channel):
         super(IDAUp, self).__init__()
@@ -192,6 +192,7 @@ class IDAUp(nn.Module):
 class MobileNetUp(nn.Module):
     def __init__(self, channels, out_dim = 24):
         super(MobileNetUp, self).__init__()
+        # channels = 24 32 96 320
         channels =  channels[::-1]
         self.conv =  nn.Sequential(
                     nn.Conv2d(channels[0], out_dim,
@@ -203,10 +204,10 @@ class MobileNetUp(nn.Module):
                               kernel_size=3, stride=1, padding=1 ,bias=False),
                     nn.BatchNorm2d(out_dim,eps=1e-5,momentum=0.01),
                     nn.ReLU(inplace=True))
-
+        # 进行一次上采样+卷积
         for i,channel in enumerate(channels[1:]):
             setattr(self,'up_%d'%(i),IDAUp(out_dim,channel))
-
+        # 初始化
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out')
@@ -233,12 +234,16 @@ class MobileNetSeg(nn.Module):
         super(MobileNetSeg, self).__init__()
         print("================>using MobileNet_V2")
         self.heads = heads
-        self.base = globals()[base_name](
-            pretrained=pretrained)
+        # 下面这句话等同于：
+        # self.base = globals()['mobilenetv2_10'](pretrained=pretrained)
+        # self.base = mobilenetv2_10(pretrained=pretrained)
+        # 这句话的意思就是使用 mobilenetv2_10这个网络
+        self.base = globals()[base_name](pretrained=pretrained)
         channels = self.base.feat_channel
         self.dla_up = MobileNetUp(channels, out_dim=head_conv)
 
         heads_conv = 256
+        # head = 'hm =1', 'wh =2','id = 512', 'reg' = 2
         for head in self.heads:
             classes = self.heads[head]
             if heads_conv > 0:
@@ -303,4 +308,9 @@ if __name__ == '__main__':
     heads = {'hm':1, 'wh':2, 'id':512, 'reg':2}
     model = get_mobile_net(10,heads,head_conv=24)          # hm reference for the classes of objects//这个头文件只能做矩形框检测
     res = model(input)
+    # hm  = [1, 1, 120, 160]
+    # wh  = [1, 2, 120, 160]
+    # id  = [1, 512, 120, 160]
+    # reg = [1, 2, 120, 160]
     print(res[0]['hm'].shape, res[0]['wh'].shape, res[0]['id'].shape, res[0]['reg'].shape)
+    torch.save(model,'model.pth')

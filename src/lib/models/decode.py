@@ -26,9 +26,10 @@ def _topk_channel(scores, K=40):
 
       return topk_scores, topk_inds, topk_ys, topk_xs
 
+# scores = heatmap
 def _topk(scores, K=40):
     batch, cat, height, width = scores.size()
-      
+    # 最大值，对应位置的索引
     topk_scores, topk_inds = torch.topk(scores.view(batch, cat, -1), K)
 
     topk_inds = topk_inds % (height * width)
@@ -37,8 +38,8 @@ def _topk(scores, K=40):
       
     topk_score, topk_ind = torch.topk(topk_scores.view(batch, -1), K)
     topk_clses = (torch.true_divide(topk_ind, K)).int()
-    topk_inds = _gather_feat(
-        topk_inds.view(batch, -1, 1), topk_ind).view(batch, K)
+    
+    topk_inds = _gather_feat(topk_inds.view(batch, -1, 1), topk_ind).view(batch, K)
     topk_ys = _gather_feat(topk_ys.view(batch, -1, 1), topk_ind).view(batch, K)
     topk_xs = _gather_feat(topk_xs.view(batch, -1, 1), topk_ind).view(batch, K)
 
@@ -50,6 +51,7 @@ def mot_decode(heat, wh, reg=None, ltrb=False, K=100):
 
     # heat = torch.sigmoid(heat)
     # perform nms on heatmaps
+    # 用3*3的卷积核找到该区域的最大值，其他值都置为0
     heat = _nms(heat)
 
     scores, inds, clses, ys, xs = _topk(heat, K=K)

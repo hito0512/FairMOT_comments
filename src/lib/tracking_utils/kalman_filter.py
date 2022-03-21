@@ -3,7 +3,6 @@ import numba
 import numpy as np
 import scipy.linalg
 
-
 """
 Table for the 0.95 quantile of the chi-square distribution with N degrees of
 freedom (contains values for N=1, ..., 9). Taken from MATLAB/Octave's chi2inv
@@ -45,8 +44,19 @@ class KalmanFilter(object):
         self._motion_mat = np.eye(2 * ndim, 2 * ndim)
         for i in range(ndim):
             self._motion_mat[i, ndim + i] = dt
+        # _motion_mat = [[1. 0. 0. 0. 1. 0. 0. 0.]
+        #                [0. 1. 0. 0. 0. 1. 0. 0.]
+        #                [0. 0. 1. 0. 0. 0. 1. 0.]
+        #                [0. 0. 0. 1. 0. 0. 0. 1.]
+        #                [0. 0. 0. 0. 1. 0. 0. 0.]
+        #                [0. 0. 0. 0. 0. 1. 0. 0.]
+        #                [0. 0. 0. 0. 0. 0. 1. 0.]
+        #                [0. 0. 0. 0. 0. 0. 0. 1.]],相当于状态转移矩阵F
         self._update_mat = np.eye(ndim, 2 * ndim)
-
+        # _update_mat = [[1. 0. 0. 0. 0. 0. 0. 0.]
+        #                [0. 1. 0. 0. 0. 0. 0. 0.]
+        #                [0. 0. 1. 0. 0. 0. 0. 0.]
+        #                [0. 0. 0. 1. 0. 0. 0. 0.]]，相当于观测矩阵 H，状态变量用了4个 x, y, a, h
         # Motion and observation uncertainty are chosen relative to the current
         # state estimate. These weights control the amount of uncertainty in
         # the model. This is a bit hacky.
@@ -72,6 +82,7 @@ class KalmanFilter(object):
         """
         mean_pos = measurement
         mean_vel = np.zeros_like(mean_pos)
+        # 拼接，拼成一行 shape = 1*8
         mean = np.r_[mean_pos, mean_vel]
 
         std = [
@@ -84,6 +95,8 @@ class KalmanFilter(object):
             1e-5,
             10 * self._std_weight_velocity * measurement[3]]
         covariance = np.diag(np.square(std))
+        # covariance.shape = 8*8
+        # mean 就是 (x, y, a, h, vx, vy, va, vh)的预测值，初始的时候等于观测值
         return mean, covariance
 
     def predict(self, mean, covariance):
@@ -104,6 +117,9 @@ class KalmanFilter(object):
             Returns the mean vector and covariance matrix of the predicted
             state. Unobserved velocities are initialized to 0 mean.
 
+        x, y, a, h, vx, vy, va, vh
+        self._std_weight_position = 1. / 20
+        self._std_weight_velocity = 1. / 160
         """
         std_pos = [
             self._std_weight_position * mean[3],
@@ -115,10 +131,14 @@ class KalmanFilter(object):
             self._std_weight_velocity * mean[3],
             1e-5,
             self._std_weight_velocity * mean[3]]
+        
+        # 过程噪声的协方差矩阵，只有对角线有值，其他地方没有，说明其他地方都是不相关
         motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
 
         #mean = np.dot(self._motion_mat, mean)
+        # 这里相当于公示  xn = Fn * xn_1 + Bn * un_1
         mean = np.dot(mean, self._motion_mat.T)
+        # Pn = F * Pn_1 * F` + Q   Q为过程噪声
         covariance = np.linalg.multi_dot((
             self._motion_mat, covariance, self._motion_mat.T)) + motion_cov
 
@@ -146,8 +166,10 @@ class KalmanFilter(object):
             self._std_weight_position * mean[3],
             1e-1,
             self._std_weight_position * mean[3]]
-        innovation_cov = np.diag(np.square(std))
 
+        # 观测噪声
+        innovation_cov = np.diag(np.square(std))
+        # self._update_mat.shape = [4, 8]
         mean = np.dot(self._update_mat, mean)
         covariance = np.linalg.multi_dot((
             self._update_mat, covariance, self._update_mat.T))
@@ -198,7 +220,7 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            The predicted state's mean vector (8 dimensional).
+            The predicted state's mean vector (1*8 dimensional).
         covariance : ndarray
             The state's covariance matrix (8x8 dimensional).
         measurement : ndarray
@@ -219,9 +241,11 @@ class KalmanFilter(object):
         kalman_gain = scipy.linalg.cho_solve(
             (chol_factor, lower), np.dot(covariance, self._update_mat.T).T,
             check_finite=False).T
+        # measurement 观测值 - 预测值
         innovation = measurement - projected_mean
-
+        # x 进行更新 xn` = xn + K(z - xn)
         new_mean = mean + np.dot(innovation, kalman_gain.T)
+        # Pn` = Pn - K`HnPn
         new_covariance = covariance - np.linalg.multi_dot((
             kalman_gain, projected_cov, kalman_gain.T))
         return new_mean, new_covariance
